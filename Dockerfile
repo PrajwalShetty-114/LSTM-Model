@@ -4,7 +4,7 @@
 FROM alpine/git:latest AS lfs-fetcher
 
 # Set the GitHub repo URL and branch
-ARG REPO_URL="https://github.com/PrajwalShetty-114/XG-Boost-Model.git"
+ARG REPO_URL="https://github.com/PrajwalShetty-114/LSTM-Model.git"
 ARG BRANCH="master"
 
 WORKDIR /repo
