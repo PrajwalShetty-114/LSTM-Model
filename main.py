@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="LSTM Traffic Forecast API")
 
 # --- 2. Load the trained model and scaler ---
-MODEL_PATH = "data/lstm_traffic_model.keras"
+MODEL_PATH = "data/lstm_traffic_model_fixed.keras"
 SCALER_PATH = "data/lstm_scaler.pkl"
 model = None
 scaler = None
