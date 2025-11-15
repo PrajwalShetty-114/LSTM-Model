@@ -120,3 +120,9 @@ async def make_forecast(input_data: PredictionInput):
 @app.get("/")
 def read_root():
     return {"message": "LSTM Traffic Forecast API is running!"}
+
+
+if __name__ == "__main__":
+    import os, uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
