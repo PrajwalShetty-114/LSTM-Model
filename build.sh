@@ -5,7 +5,7 @@ echo "Upgrade pip/setuptools/wheel..."
 python -m pip install --upgrade pip setuptools wheel
 
 echo "Install numpy first (binary wheel)..."
-python -m pip install --prefer-binary --upgrade --force-reinstall numpy==1.25.2
+python -m pip install --prefer-binary --upgrade --force-reinstall numpy==1.26.4
 
 echo "Install other requirements (prefer binary wheels)..."
 python -m pip install --prefer-binary -r requirements.txt
@@ -13,7 +13,7 @@ python -m pip install --prefer-binary -r requirements.txt
 echo "Sanity check versions..."
 python - <<'PY'
 import sys
-import numpy
+import numpy, importlib
 print("python:", sys.version.splitlines()[0])
 print("numpy:", numpy.__version__, numpy.__file__)
 try:
