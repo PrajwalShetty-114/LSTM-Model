@@ -1,11 +1,11 @@
-fastapi
-gunicorn
-uvicorn
-pandas
-joblib
-scikit-learn==1.6.1
-xgboost
-numpy==1.26.4
-scipy==1.10.1
-tensorflow-cpu==2.19.0
-python-multipart
+fastapi>=0.110.0,<0.111.0
+uvicorn[standard]>=0.23.0,<0.24.0
+scikit-learn>=1.3.0,<1.4.0
+pandas>=2.1.0,<2.2.0
+joblib>=1.3.0,<1.4.0
+pydantic>=2.4.0,<2.5.0
+python-multipart>=0.0.6,<0.0.7
+numpy>=1.26.0,<1.27.0
+gunicorn>=20.1.0,<20.2.0
+
+# tensorflow is installed via Dockerfile command
