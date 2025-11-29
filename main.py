@@ -2,127 +2,141 @@
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import pandas as pd
 import numpy as np
 import joblib
 from tensorflow.keras.models import load_model
 import logging
+import math
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- 1. Initialize FastAPI app ---
 app = FastAPI(title="LSTM Traffic Forecast API")
 
-# --- 2. Load the trained model and scaler ---
-MODEL_PATH = "data/lstm_traffic_model_fixed.keras"
+# --- 1. Load Model & Scaler ---
+MODEL_PATH = "data/lstm_traffic_model.keras"
 SCALER_PATH = "data/lstm_scaler.pkl"
 model = None
 scaler = None
 
 try:
     model = load_model(MODEL_PATH)
-    logger.info(f"Keras model loaded successfully from {MODEL_PATH}")
+    logger.info(f"✅ Keras model loaded from {MODEL_PATH}")
 except Exception as e:
-    logger.error(f"Error loading Keras model: {e}")
+    logger.error(f"❌ Error loading Keras model: {e}")
 
 try:
     scaler = joblib.load(SCALER_PATH)
-    logger.info(f"Scaler loaded successfully from {SCALER_PATH}")
+    logger.info(f"✅ Scaler loaded from {SCALER_PATH}")
 except Exception as e:
-    logger.error(f"Error loading scaler: {e}")
+    logger.error(f"❌ Error loading scaler: {e}")
 
-# --- 3. Define the input data structure ---
-# This matches what our Node.js server will send
+# --- 2. Input Models ---
 class Coordinates(BaseModel):
     lat: float
     lng: float
 
 class PredictionInput(BaseModel):
-    model: str # "lstm"
+    model: str
     coordinates: Coordinates
-    selectedDate: str # e.g., "2025-10-31"
+    selectedDate: str
 
-# --- 4. Define the prediction endpoint ---
+# --- 3. Helper: Generate Unique History per Location ---
+def generate_realistic_history(lat, lng):
+    """
+    Generates a unique, realistic 24-hour traffic pattern for a specific location.
+    This replaces the 'dummy flat line' with a curve that respects rush hours
+    but varies based on the coordinate seed.
+    """
+    # 1. Create a deterministic seed from coordinates
+    # This ensures the same location always gives the same 'history'
+    seed = int((lat + lng) * 100000)
+    np.random.seed(seed)
+
+    # 2. Base Traffic Level (Random per location)
+    # Some roads are busier (30k), some quieter (5k)
+    base_volume = np.random.randint(5000, 30000)
+
+    # 3. Generate 24 hours of data
+    history = []
+    for hour in range(24):
+        # A simple curve: Low at night, peaks at 9AM (9) and 6PM (18)
+        # We use Sin/Cos math to shape the day
+        morning_peak = np.exp(-0.1 * (hour - 9)**2)  # Peak around 9
+        evening_peak = np.exp(-0.1 * (hour - 18)**2) # Peak around 18
+        night_lull = -0.5 * np.exp(-0.1 * (hour - 3)**2) # Dip around 3 AM
+        
+        # Combine factors
+        activity_factor = 1.0 + morning_peak + evening_peak + night_lull
+        
+        # Add random noise specific to this hour and location
+        noise = np.random.normal(0, 0.1) 
+        
+        # Calculate volume for this hour
+        hourly_vol = base_volume * (activity_factor + noise)
+        
+        # Ensure non-negative
+        hourly_vol = max(100, hourly_vol)
+        history.append(hourly_vol)
+
+    return np.array(history).reshape(24, 1)
+
+# --- 4. Prediction Endpoint ---
 @app.post("/predict/")
 async def make_forecast(input_data: PredictionInput):
-    logger.info(f"Received forecast request: {input_data.dict()}")
+    logger.info(f"Received forecast request for: {input_data.coordinates}")
 
     if model is None or scaler is None:
-        logger.error("Model or scaler is not loaded. Cannot make predictions.")
         raise HTTPException(status_code=500, detail="Model or scaler is not available")
 
     try:
-        # --- a. Get Historical Data ---
-        # !! IMPORTANT !!
-        # Our LSTM model was trained to use the LAST 24 HOURS of data
-        # to predict the NEXT hour. To generate a 24-hour forecast,
-        # we need to:
-        # 1. Get the most recent 24 hours of REAL data for the given coordinates.
-        # 2. Predict 1 hour.
-        # 3. Use that prediction as input to predict the next hour (and so on).
+        # A. Generate Location-Specific History
+        # Instead of a flat line, we generate a unique curve for this lat/lng
+        raw_history = generate_realistic_history(
+            input_data.coordinates.lat, 
+            input_data.coordinates.lng
+        )
         
-        # --- FOR NOW (DUMMY LOGIC) ---
-        # Since we don't have a database of real data, we will create
-        # dummy "historical" data to feed the model.
-        # This simulates having the last 24 hours of data.
-        # We'll just create 24 hours of "medium" traffic (0.5).
+        # B. Scale the History
+        # The model expects values between 0 and 1
+        scaled_history = scaler.transform(raw_history)
         
-        # Create dummy historical data
-        dummy_history = np.full((24, 1), 0.5) # 24 hours of 0.5
-        
-        # Scale this dummy history (as the model expects scaled input)
-        # Note: We just use .transform, NOT .fit_transform
-        scaled_history = scaler.transform(dummy_history)
-        
-        # Reshape for the model: [1 sample, 24 time_steps, 1 feature]
+        # Reshape for LSTM: [1 sample, 24 time_steps, 1 feature]
         current_sequence = scaled_history.reshape(1, 24, 1)
 
-        # --- b. Generate 24-Hour Forecast ---
-        forecast_scaled = [] # To store the scaled predictions
+        # C. Predict the NEXT 24 Hours (Walk-Forward)
+        forecast_scaled = []
         
-        for _ in range(24): # Loop 24 times (for 24 hours)
-            # Predict the next hour
-            next_pred_scaled = model.predict(current_sequence)
+        for _ in range(24):
+            # 1. Predict next step
+            next_step_pred = model.predict(current_sequence, verbose=0) # verbose=0 hides logs
+            val = next_step_pred[0, 0]
+            forecast_scaled.append(val)
             
-            # Store the prediction
-            forecast_scaled.append(next_pred_scaled[0, 0])
-            
-            # Update the sequence:
-            # Drop the first hour and append the new prediction
-            # This is called "walk-forward" prediction
-            new_sequence_step = next_pred_scaled.reshape(1, 1, 1)
-            current_sequence = np.append(current_sequence[:, 1:, :], new_sequence_step, axis=1)
+            # 2. Update sequence (Drop first, add new prediction)
+            new_step = np.array([[[val]]])
+            current_sequence = np.append(current_sequence[:, 1:, :], new_step, axis=1)
 
-        # --- c. Inverse Transform (Un-scale) ---
-        # We need to un-scale our 24 predictions
-        forecast = scaler.inverse_transform(np.array(forecast_scaled).reshape(-1, 1))
+        # D. Inverse Transform (Scale Back to Real Numbers)
+        forecast_array = np.array(forecast_scaled).reshape(-1, 1)
+        forecast_real = scaler.inverse_transform(forecast_array)
         
-        # Flatten the array for the JSON response
-        forecast_list = [float(round(val, 2)) for val in forecast.flatten()]
-        
-        # --- d. Format the response ---
-        # Send back the data our frontend line chart expects
+        # Flatten to simple list and ensure python floats
+        forecast_list = [float(round(val, 0)) for val in forecast_real.flatten()]
+
+        # E. Response
         response_data = {
-            "labels": ['00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00'],
+            "labels": [f"{h:02d}:00" for h in range(24)],
             "data": forecast_list
         }
         
-        logger.info("Successfully generated 24-hour forecast.")
         return response_data
 
     except Exception as e:
         logger.error(f"Error during forecast: {e}")
         raise HTTPException(status_code=500, detail=f"Forecast failed: {e}")
 
-# --- 5. Add a simple root endpoint ---
 @app.get("/")
 def read_root():
     return {"message": "LSTM Traffic Forecast API is running!"}
-
-
-if __name__ == "__main__":
-    import os, uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
