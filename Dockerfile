@@ -3,7 +3,7 @@ FROM alpine/git:latest AS lfs-fetcher
 
 # REPLACE THIS with your actual LSTM repo URL
 ARG REPO_URL="https://github.com/PrajwalShetty-114/LSTM-Model.git"
-ARG BRANCH="main"
+ARG BRANCH="master"
 
 WORKDIR /repo
 
