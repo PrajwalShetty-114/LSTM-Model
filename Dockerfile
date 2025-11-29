@@ -36,4 +36,8 @@ COPY --from=lfs-fetcher /repo/main.py .
 
 # 4. Run the application
 # Optimized for Free Tier: 1 worker, 300s timeout
-CMD ["gunicorn", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--timeout", "300", "main:app", "--bind", "0.0.0.0:$PORT"]
+# OLD (Exec form - fails to expand $PORT):
+# CMD ["gunicorn", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--timeout", "300", "main:app", "--bind", "0.0.0.0:$PORT"]
+
+# NEW (Shell form - correctly expands $PORT):
+CMD gunicorn -w 1 -k uvicorn.workers.UvicornWorker --timeout 300 main:app --bind 0.0.0.0:$PORT
